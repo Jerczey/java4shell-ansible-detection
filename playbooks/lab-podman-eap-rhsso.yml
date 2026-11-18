@@ -1,0 +1,140 @@
+---
+# Lab helper — start JBoss EAP 8 and RH-SSO containers with Podman
+# for local/process-based detection testing (CVE-2026-114938).
+#
+# Prerequisites:
+#   - podman installed on target(s)
+#   - registry.redhat.io login (podman login) OR RH_REGISTRY_USER / RH_REGISTRY_PASSWORD
+#
+# Usage:
+#   ansible-playbook playbooks/lab-podman-eap-rhsso.yml -l lab_podman
+#   ansible-playbook playbooks/lab-podman-eap-rhsso.yml -l lab_podman -e lab_action=stop
+#   ansible-playbook playbooks/lab-podman-eap-rhsso.yml -l lab_podman -e lab_action=status
+
+- name: Podman lab for EAP 8 and RH-SSO
+  hosts: lab_podman
+  gather_facts: true
+  become: false
+  vars:
+    lab_action: start  # start | stop | status
+
+  tasks:
+    - name: Assert podman is available
+      ansible.builtin.command: podman --version
+      register: podman_version
+      changed_when: false
+
+    - name: Show podman version
+      ansible.builtin.debug:
+        var: podman_version.stdout
+
+    - name: Login to Red Hat container registry
+      ansible.builtin.command:
+        cmd: >-
+          podman login {{ lab_registry }}
+          -u {{ lab_registry_user }}
+          -p {{ lab_registry_password }}
+      no_log: true
+      when:
+        - lab_action == 'start'
+        - lab_registry_user | length > 0
+        - lab_registry_password | length > 0
+      register: registry_login
+      changed_when: "'Login Succeeded!' in registry_login.stdout or 'Existing credentials' in registry_login.stdout"
+
+    - name: Remind to login if credentials not provided
+      ansible.builtin.debug:
+        msg: >-
+          RH_REGISTRY_USER/PASSWORD not set. Ensure 'podman login {{ lab_registry }}'
+          was already done on {{ inventory_hostname }}.
+      when:
+        - lab_action == 'start'
+        - lab_registry_user | length == 0 or lab_registry_password | length == 0
+
+    - name: Ensure lab network exists
+      ansible.builtin.command:
+        cmd: podman network create {{ lab_network_name }}
+      register: lab_net_cli
+      when: lab_action == 'start'
+      failed_when: false
+      changed_when: lab_net_cli.rc == 0
+
+    - name: Pull EAP 8 image
+      ansible.builtin.command:
+        cmd: podman pull {{ lab_eap_image }}
+      when: lab_action == 'start'
+      register: pull_eap
+      changed_when: "'Downloading' in pull_eap.stdout or 'Copying' in pull_eap.stdout"
+
+    - name: Pull RH-SSO image
+      ansible.builtin.command:
+        cmd: podman pull {{ lab_rhsso_image }}
+      when: lab_action == 'start'
+      register: pull_rhsso
+      changed_when: "'Downloading' in pull_rhsso.stdout or 'Copying' in pull_rhsso.stdout"
+
+    - name: Start EAP 8 container
+      ansible.builtin.command:
+        cmd: >-
+          podman run -d --replace
+          --name {{ lab_eap_container_name }}
+          --network {{ lab_network_name }}
+          -p {{ lab_eap_http_port }}:8080
+          -p {{ lab_eap_mgmt_port }}:9990
+          -e JAVA_OPTS_APPEND=-Xms512m -Xmx512m
+          {{ lab_eap_image }}
+      when: lab_action == 'start'
+      register: eap_run
+      changed_when: eap_run.rc == 0
+
+    - name: Start RH-SSO container
+      ansible.builtin.command:
+        cmd: >-
+          podman run -d --replace
+          --name {{ lab_rhsso_container_name }}
+          --network {{ lab_network_name }}
+          -p {{ lab_rhsso_http_port }}:8080
+          -p {{ lab_rhsso_https_port }}:8443
+          -e SSO_ADMIN_USERNAME=admin
+          -e SSO_ADMIN_PASSWORD=ChangeMeLabOnly!
+          {{ lab_rhsso_image }}
+      when: lab_action == 'start'
+      register: rhsso_run
+      changed_when: rhsso_run.rc == 0
+      no_log: true
+
+    - name: Stop and remove lab containers
+      ansible.builtin.command:
+        cmd: podman rm -f {{ item }}
+      loop:
+        - "{{ lab_eap_container_name }}"
+        - "{{ lab_rhsso_container_name }}"
+      when: lab_action == 'stop'
+      register: lab_stop
+      failed_when: false
+      changed_when: lab_stop.rc == 0
+
+    - name: Show lab container status
+      ansible.builtin.command:
+        cmd: podman ps -a --filter name={{ item }} --format json
+      loop:
+        - "{{ lab_eap_container_name }}"
+        - "{{ lab_rhsso_container_name }}"
+      when: lab_action in ['start', 'status', 'stop']
+      register: lab_status
+      changed_when: false
+
+    - name: Display lab status
+      ansible.builtin.debug:
+        msg: "{{ lab_status.results | map(attribute='stdout') | list }}"
+
+    - name: Hint — Java inside containers (host view)
+      ansible.builtin.debug:
+        msg:
+          - "After start, host 'ps' may not see container JVMs unless using --pid=host."
+          - "To inspect Java inside a container:"
+          - "  podman exec {{ lab_eap_container_name }} ps -ef | grep java"
+          - "  podman exec {{ lab_eap_container_name }} java -version"
+          - "  podman exec {{ lab_rhsso_container_name }} ps -ef | grep java"
+          - "Or re-run detect with a host that runs Java on the host PID namespace."
+      when: lab_action == 'start'

@@ -1,0 +1,253 @@
+---
+# CVE-2026-114938 (Java4Shell) — detection playbook
+#
+# Checks per host:
+#  1) Running Java processes (/proc + ps fallback), not only java -version / rpm
+#  2) CPU flag avx512vbmi
+#  3) Optional: mitigation flags on running JVM cmdlines
+#
+# Usage:
+#   ansible-playbook playbooks/detect-java4shell.yml
+#   ansible-playbook playbooks/detect-java4shell.yml -l cluster1
+#   ansible-playbook playbooks/detect-java4shell.yml -e check_mitigations=true
+
+- name: Detect Java4Shell exposure indicators
+  hosts: all
+  gather_facts: true
+  vars:
+    check_mitigations: true
+    scan_podman_containers: true
+
+  tasks:
+    - name: Ensure report directory exists on control node
+      ansible.builtin.file:
+        path: "{{ java4shell_report_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Copy Java process collector script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/collect_java_processes.sh"
+        dest: /tmp/collect_java_processes.sh
+        mode: "0755"
+
+    - name: Collect running Java processes
+      ansible.builtin.command:
+        cmd: /tmp/collect_java_processes.sh
+      register: java_proc_raw
+      changed_when: false
+
+    - name: Parse Java process JSON
+      ansible.builtin.set_fact:
+        java_processes: "{{ java_proc_raw.stdout | default('[]') | from_json }}"
+
+    - name: Detect AVX-512 VBMI CPU flag
+      ansible.builtin.shell: |
+        set -o pipefail
+        grep -o avx512vbmi /proc/cpuinfo | head -1 || true
+      args:
+        executable: /bin/bash
+      register: avx512vbmi_raw
+      changed_when: false
+
+    - name: Set CPU exposure facts
+      ansible.builtin.set_fact:
+        cpu_has_avx512vbmi: "{{ (avx512vbmi_raw.stdout | trim) == 'avx512vbmi' }}"
+        cpu_arch: "{{ ansible_facts['architecture'] | default('unknown') }}"
+        cpu_is_x86_64: "{{ ansible_facts['architecture'] | default('') in ['x86_64', 'amd64'] }}"
+
+    - name: Copy Podman Java collector script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/collect_podman_java.sh"
+        dest: /tmp/collect_podman_java.sh
+        mode: "0755"
+      when: scan_podman_containers | bool
+
+    - name: Collect Java processes inside Podman containers
+      ansible.builtin.command:
+        cmd: /tmp/collect_podman_java.sh
+      register: podman_java_raw
+      changed_when: false
+      when: scan_podman_containers | bool
+      failed_when: false
+
+    - name: Parse Podman Java JSON
+      ansible.builtin.set_fact:
+        podman_java_processes: "{{ (podman_java_raw.stdout | default('[]')) | from_json }}"
+      when: scan_podman_containers | bool
+
+    - name: Default empty Podman Java list
+      ansible.builtin.set_fact:
+        podman_java_processes: []
+      when: not (scan_podman_containers | bool)
+
+    - name: Evaluate host process risk hints
+      ansible.builtin.set_fact:
+        java_process_assessments: >-
+          {{
+            java_process_assessments | default([]) + [
+              {
+                'source': 'host',
+                'pid': item.pid,
+                'user': item.user,
+                'exe': item.exe,
+                'java_version_string': item.java_version_string,
+                'mitigation_UseBASE64Intrinsics': item.mitigation_UseBASE64Intrinsics | bool,
+                'mitigation_UseAVX2': item.mitigation_UseAVX2 | bool,
+                'has_any_mitigation': (item.mitigation_UseBASE64Intrinsics | bool) or (item.mitigation_UseAVX2 | bool),
+                'cmdline_truncated': item.cmdline[:240]
+              }
+            ]
+          }}
+      loop: "{{ java_processes }}"
+      loop_control:
+        label: "pid={{ item.pid }}"
+      when: java_processes | length > 0
+
+    - name: Evaluate Podman process risk hints
+      ansible.builtin.set_fact:
+        java_process_assessments: >-
+          {{
+            java_process_assessments | default([]) + [
+              {
+                'source': 'podman',
+                'container': item.container,
+                'pid': item.pid,
+                'java_version_string': item.java_version_string,
+                'mitigation_UseBASE64Intrinsics': item.mitigation_UseBASE64Intrinsics | bool,
+                'mitigation_UseAVX2': item.mitigation_UseAVX2 | bool,
+                'has_any_mitigation': (item.mitigation_UseBASE64Intrinsics | bool) or (item.mitigation_UseAVX2 | bool),
+                'cmdline_truncated': item.cmdline[:240]
+              }
+            ]
+          }}
+      loop: "{{ podman_java_processes }}"
+      loop_control:
+        label: "container={{ item.container }} pid={{ item.pid }}"
+      when: podman_java_processes | length > 0
+
+    - name: Normalize empty assessments
+      ansible.builtin.set_fact:
+        java_process_assessments: []
+      when: (java_processes | length) == 0 and (podman_java_processes | length) == 0
+
+    - name: Filter mitigated processes when requested
+      ansible.builtin.set_fact:
+        mitigation_gaps: >-
+          {{
+            java_process_assessments
+            | rejectattr('has_any_mitigation')
+            | list
+            if (check_mitigations | bool)
+            else []
+          }}
+
+    - name: Build host summary
+      ansible.builtin.set_fact:
+        java4shell_host_summary:
+          inventory_hostname: "{{ inventory_hostname }}"
+          cluster_name: "{{ cluster_name | default('n/a') }}"
+          ansible_host: "{{ ansible_host | default(inventory_hostname) }}"
+          architecture: "{{ cpu_arch }}"
+          is_x86_64: "{{ cpu_is_x86_64 }}"
+          cpu_has_avx512vbmi: "{{ cpu_has_avx512vbmi }}"
+          java_process_count: "{{ java_processes | length }}"
+          podman_java_process_count: "{{ podman_java_processes | length }}"
+          check_mitigations: "{{ check_mitigations | bool }}"
+          processes_without_mitigation: "{{ mitigation_gaps | length }}"
+          processes: "{{ java_process_assessments }}"
+          notes: >-
+            {{
+              (
+                ['No running java processes found on host or podman']
+                if ((java_processes | length) == 0 and (podman_java_processes | length) == 0) else []
+              )
+              + (
+                ['CPU lacks avx512vbmi — not known to be affected by CVE-2026-114938']
+                if not (cpu_has_avx512vbmi | bool) else
+                ['CPU reports avx512vbmi — vulnerable OpenJDK path may be active']
+              )
+              + (
+                ['Architecture is not x86_64 — AVX-512 path not applicable']
+                if not (cpu_is_x86_64 | bool) else []
+              )
+              + (
+                ['One or more JVMs lack mitigation flags']
+                if (check_mitigations | bool) and (mitigation_gaps | length > 0) else []
+              )
+            }}
+
+    - name: Display host summary
+      ansible.builtin.debug:
+        var: java4shell_host_summary
+
+    - name: Write per-host JSON report on control node
+      ansible.builtin.copy:
+        dest: "{{ java4shell_report_dir }}/{{ inventory_hostname }}.json"
+        mode: "0644"
+        content: "{{ java4shell_host_summary | to_nice_json }}\n"
+      delegate_to: localhost
+
+    - name: Remove temporary collector scripts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/collect_java_processes.sh
+        - /tmp/collect_podman_java.sh
+
+- name: Aggregate report
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    java4shell_report_dir: "{{ playbook_dir }}/../reports"
+  tasks:
+    - name: Find per-host JSON reports
+      ansible.builtin.find:
+        paths: "{{ java4shell_report_dir }}"
+        patterns: "*.json"
+        excludes: "aggregate-*.json"
+      register: host_report_files
+
+    - name: Load per-host reports
+      ansible.builtin.slurp:
+        src: "{{ item.path }}"
+      loop: "{{ host_report_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      register: slurped_reports
+
+    - name: Build aggregate list
+      ansible.builtin.set_fact:
+        aggregate_reports: >-
+          {{
+            slurped_reports.results
+            | selectattr('content', 'defined')
+            | map(attribute='content')
+            | map('b64decode')
+            | map('from_json')
+            | list
+          }}
+
+    - name: Write aggregate JSON
+      ansible.builtin.copy:
+        dest: "{{ java4shell_report_dir }}/aggregate-java4shell.json"
+        mode: "0644"
+        content: "{{ aggregate_reports | to_nice_json }}\n"
+
+    - name: Write simple CSV summary
+      ansible.builtin.copy:
+        dest: "{{ java4shell_report_dir }}/aggregate-java4shell.csv"
+        mode: "0644"
+        content: |
+          hostname,cluster,arch,avx512vbmi,java_processes,any_mitigation
+          {% for h in aggregate_reports %}
+          {{ h.inventory_hostname }},{{ h.cluster_name }},{{ h.architecture }},{{ h.cpu_has_avx512vbmi }},{{ h.java_process_count }},{{ (h.processes | selectattr('has_any_mitigation') | list | length > 0) }}
+          {% endfor %}
+
+    - name: Show aggregate CSV path
+      ansible.builtin.debug:
+        msg: "Reports written under {{ java4shell_report_dir }}"

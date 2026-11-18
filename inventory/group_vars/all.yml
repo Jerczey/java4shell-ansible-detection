@@ -1,0 +1,38 @@
+---
+# Variables globales — CVE-2026-114938 (Java4Shell)
+
+# Directorio de reportes en el control node
+java4shell_report_dir: "{{ playbook_dir }}/../reports"
+
+# Mitigaciones a buscar en cmdline del proceso Java
+java4shell_mitigation_flags:
+  - "-XX:-UseBASE64Intrinsics"
+  - "-XX:UseAVX=2"
+
+# Versiones OpenJDK potencialmente afectadas (líneas mayores)
+# OpenJDK 8 y 11 NO contienen el code path vulnerable
+java4shell_affected_majors:
+  - "17"
+  - "21"
+  - "25"
+  - "27"
+
+# Lab Podman — imágenes Red Hat (requieren login en registry.redhat.io)
+lab_registry: registry.redhat.io
+lab_network_name: java4shell-lab
+
+# JBoss EAP 8 (OpenJDK 17) — runtime OpenShift image útil para lab
+lab_eap_image: "{{ lab_registry }}/jboss-eap-8/eap8-openjdk17-runtime-openshift-rhel8:latest"
+lab_eap_container_name: lab-eap8
+lab_eap_http_port: 8080
+lab_eap_mgmt_port: 9990
+
+# RH-SSO 7.6 — imagen OpenShift (suele traer OpenJDK 11; útil para contraste)
+lab_rhsso_image: "{{ lab_registry }}/rh-sso-7/sso76-openshift-rhel8:latest"
+lab_rhsso_container_name: lab-rhsso76
+lab_rhsso_http_port: 8081
+lab_rhsso_https_port: 8443
+
+# Credenciales de registry (rellenar o exportar env)
+lab_registry_user: "{{ lookup('env', 'RH_REGISTRY_USER') | default('', true) }}"
+lab_registry_password: "{{ lookup('env', 'RH_REGISTRY_PASSWORD') | default('', true) }}"

@@ -1,0 +1,18 @@
+---
+# Inventario local para probar el playbook en esta máquina
+# ansible-playbook -i inventory/hosts.local.yml playbooks/detect-java4shell.yml
+
+all:
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: auto_silent
+    cluster_name: local-lab
+  children:
+    cluster3:
+      hosts:
+        localhost:
+          ansible_host: 127.0.0.1
+          node_role: lab
+    lab_podman:
+      hosts:
+        localhost:
