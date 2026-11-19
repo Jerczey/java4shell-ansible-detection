@@ -1,0 +1,28 @@
+# RH-SSO 7.6 — Keycloak CR with JAVA_OPTS_APPEND mitigation
+# Official sso76-openshift-rhel8 image uses OpenJDK 11 (not on vulnerable path).
+# Mitigation still shown for lab consistency / custom JDK 17+ images.
+# Requires: rhsso-operator; working DB (embedded or externalDatabase + secret).
+# Apply: oc apply -f rhsso-java4shell.yaml
+---
+apiVersion: keycloak.org/v1alpha1
+kind: Keycloak
+metadata:
+  name: java4shell-rhsso
+  namespace: rhsso
+  labels:
+    app: java4shell-sso
+spec:
+  instances: 1
+  externalAccess:
+    enabled: true
+  # Prefer external DB in labs where rhscl/postgresql pull fails
+  externalDatabase:
+    enabled: true
+  keycloakDeploymentSpec:
+    experimental:
+      env:
+        - name: JAVA_OPTS_APPEND
+          value: "-XX:-UseBASE64Intrinsics"
+# Secret name convention when externalDatabase.enabled: <cr-name>-db-secret
+# Example fields: POSTGRES_DATABASE, POSTGRES_HOST, POSTGRES_USERNAME,
+# POSTGRES_PASSWORD, POSTGRES_EXTERNAL_ADDRESS, POSTGRES_EXTERNAL_PORT

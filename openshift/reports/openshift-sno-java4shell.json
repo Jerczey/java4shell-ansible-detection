@@ -1,0 +1,62 @@
+{
+  "cluster": "api.rhcos9-sno.lab.local",
+  "cve": "CVE-2026-114938",
+  "node_cpu_avx512vbmi": true,
+  "workloads": [
+    {
+      "product": "Red Hat Data Grid 8.6.3",
+      "namespace": "datagrid-system",
+      "pod": "java4shell-dg-0",
+      "jdk": "25.0.4.1",
+      "before": {
+        "UseBASE64Intrinsics": true,
+        "exposed": true
+      },
+      "mitigation": "spec.container.extraJvmOpts / JAVA_OPTIONS=-XX:-UseBASE64Intrinsics",
+      "after": {
+        "UseBASE64Intrinsics": false,
+        "source": "command line"
+      }
+    },
+    {
+      "product": "RH-SSO 7.6",
+      "namespace": "rhsso",
+      "pod": "keycloak-0",
+      "jdk": "11.0.33",
+      "before": {
+        "UseBASE64Intrinsics": true,
+        "exposed": false,
+        "note": "OpenJDK 11 not on vulnerable Base64 code path"
+      },
+      "mitigation": "JAVA_OPTS_APPEND=-XX:-UseBASE64Intrinsics via Keycloak CR experimental.env",
+      "after": {
+        "UseBASE64Intrinsics": false,
+        "source": "command line"
+      }
+    },
+    {
+      "product": "RHBK / Keycloak 26.7",
+      "namespace": "rhbk",
+      "pod": "keycloak-rhhi-0",
+      "jdk": "21.0.12",
+      "before": {
+        "UseBASE64Intrinsics": true,
+        "exposed": true
+      },
+      "mitigation": "JAVA_OPTS_APPEND via unsupported.podTemplate env",
+      "after": {
+        "UseBASE64Intrinsics": false,
+        "source": "command line"
+      }
+    }
+  ],
+  "mitigations_verified": true,
+  "notes": [
+    "Node has avx512vbmi \u2014 exposure possible for JDK 17+/21/25",
+    "RH-SSO 7.6 runs OpenJDK 11 \u2014 not on vulnerable Base64 intrinsic path; mitigation still applied for consistency",
+    "Data Grid uses extraJvmOpts -> JAVA_OPTIONS",
+    "RHSSO uses JAVA_OPTS_APPEND via Keycloak CR experimental.env",
+    "RHBK uses JAVA_OPTS_APPEND via unsupported.podTemplate",
+    "Keycloak Operator uses JDK_JAVA_OPTIONS/JAVA_TOOL_OPTIONS via Subscription.spec.config.env"
+  ]
+}

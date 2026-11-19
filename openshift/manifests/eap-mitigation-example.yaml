@@ -1,0 +1,26 @@
+# Example — JBoss EAP on OpenShift: JAVA_OPTS_APPEND for Java4Shell
+# Works for EAP 7.4 / 8 OpenShift images and most S2I Deployments.
+# Merge into your existing Deployment / EAP CR env list (append, do not replace).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eap-app-example
+  namespace: eap  # change to your namespace
+spec:
+  selector:
+    matchLabels:
+      app: eap-app-example
+  template:
+    metadata:
+      labels:
+        app: eap-app-example
+    spec:
+      containers:
+        - name: eap-app
+          image: registry.redhat.io/jboss-eap-8/eap8-openjdk17-runtime-openshift-rhel8:latest
+          env:
+            - name: JAVA_OPTS_APPEND
+              value: "-XX:-UseBASE64Intrinsics"
+# If JAVA_OPTS_APPEND already exists, append the flag to the existing value:
+#   value: "<existing opts> -XX:-UseBASE64Intrinsics"

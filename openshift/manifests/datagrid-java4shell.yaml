@@ -1,0 +1,27 @@
+# Data Grid (Infinispan) — Java4Shell mitigation via extraJvmOpts
+# Requires: Data Grid Operator watching this namespace; storage class as needed.
+# Apply: oc apply -f datagrid-java4shell.yaml
+---
+apiVersion: infinispan.org/v1
+kind: Infinispan
+metadata:
+  name: java4shell-dg
+  namespace: datagrid-system
+  labels:
+    app: java4shell
+spec:
+  replicas: 1
+  service:
+    type: DataGrid
+  security:
+    endpointAuthentication: false
+  expose:
+    type: Route
+    host: java4shell-dg-datagrid-system.apps.rhcos9-sno.lab.local
+  container:
+    cpu: "500m"
+    memory: 1Gi
+    # Preferred interim mitigation for CVE-2026-114938
+    # Operator maps this to JAVA_OPTIONS on the server pod.
+    # Do not also set a conflicting JAVA_OPTIONS env entry.
+    extraJvmOpts: "-XX:-UseBASE64Intrinsics"

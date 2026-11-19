@@ -1,0 +1,20 @@
+# Example — AMQ Broker ActiveMQArtemis CR env for Java4Shell
+# Docs: JAVA_ARGS_APPEND appends; JDK_JAVA_OPTIONS prepends to the launcher.
+# Prefer JAVA_ARGS_APPEND so you do not fight broker defaults.
+# Apply only after amq-broker operator is installed.
+---
+apiVersion: broker.amq.io/v1beta1
+kind: ActiveMQArtemis
+metadata:
+  name: java4shell-amq
+  namespace: amq-broker  # change to your namespace
+spec:
+  deploymentPlan:
+    size: 1
+    image: placeholder  # use operator default / your approved image
+  env:
+    - name: JAVA_ARGS_APPEND
+      value: "-XX:-UseBASE64Intrinsics"
+    # Optional belt-and-suspenders for direct java launches:
+    # - name: JDK_JAVA_OPTIONS
+    #   value: "-XX:-UseBASE64Intrinsics"

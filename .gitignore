@@ -1,15 +1,18 @@
-# Local scan output
-reports/*
-!reports/.gitkeep
+# Ansible local scan output
+ansible/reports/*
+!ansible/reports/.gitkeep
 
-# Ansible noise
+# Ansible / editor noise
 *.retry
 .vault_pass
 .vault_password
 *.vault
-
-# Editor / OS
 .idea/
 .vscode/
 *.swp
 .DS_Store
+
+# Keep OpenShift lab snapshots under openshift/reports/
+
+# Nested zip snapshot of ansible/ (redundant once this is the repo root)
+java4shell-ansible-detection.zip
